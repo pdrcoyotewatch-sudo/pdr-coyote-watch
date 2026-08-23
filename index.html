@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>PDR Coyote Watch — Live Sighting Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg:#141d19; --surface:#1c2a24; --surface-2:#233428; --sand:#e9dfc7;
+    --amber:#e8a33d; --rust:#c1592b; --line:#33453a; --text:#eee6d4;
+    --text-dim:#9cafa3; --good:#6a9a72;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',sans-serif;overflow-x:hidden;}
+  .wrap{max-width:900px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;width:100%;}
+  header{padding:26px 20px 20px;border-bottom:1px solid var(--line);background:radial-gradient(600px 220px at 85% -40%, rgba(232,163,61,0.12), transparent 60%), var(--bg);}
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:8px;}
+  .eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 3px rgba(232,163,61,0.2);}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:clamp(26px,6vw,38px);line-height:1.05;margin:10px 0 6px;letter-spacing:-0.01em;}
+  .sub{color:var(--text-dim);font-size:14px;line-height:1.5;max-width:56ch;}
+  .stats{display:grid;grid-template-columns:repeat(4, 1fr);gap:14px 10px;margin-top:16px;}
+  .stat .n{font-family:'IBM Plex Mono',monospace;font-size:19px;color:var(--sand);font-weight:500;}
+  .stat .l{font-size:10.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;line-height:1.3;}
+  main{flex:1;padding:20px 20px 50px;}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:18px;}
+  .panel-head{padding:13px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 14px;}
+  .panel-head h2{font-family:'Fraunces',serif;font-size:16px;font-weight:600;margin:0;color:var(--sand);flex:none;}
+  .legend{display:flex;gap:14px;font-size:11.5px;color:var(--text-dim);align-items:center;flex-wrap:wrap;}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle;}
+
+  /* Date scrubber — single row always, never stacks */
+  .scrubber{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 14px;
+    background:var(--surface-2);
+    border-bottom:1px solid var(--line);
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+  }
+  .allday-toggle{
+    font-family:'IBM Plex Sans',sans-serif;font-size:12px;color:var(--text-dim);
+    display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;flex:none;
+  }
+  .scrubber-nav{
+    display:flex;align-items:center;gap:5px;flex:none;
+  }
+  .scrubber-nav button{
+    font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;background:var(--surface);
+    color:var(--sand);border:1px solid var(--line);border-radius:7px;width:28px;height:28px;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;flex:none;
+  }
+  .scrubber-nav button:hover{border-color:var(--amber);color:var(--amber);background:rgba(232,163,61,0.08);}
+  .scrubber-nav input[type=date]{
+    font-family:'IBM Plex Mono',monospace;background:var(--surface);color:var(--text);
+    border:1px solid var(--line);border-radius:7px;padding:5px 6px;font-size:12px;height:28px;
+    flex:none; width:118px;
+  }
+  .scrubber-spacer{flex:1 1 auto;min-width:6px;}
+  .today-btn{
+    font-family:'IBM Plex Sans',sans-serif;font-size:11.5px;font-weight:600;background:transparent;
+    color:var(--amber);border:1px solid var(--amber);border-radius:7px;padding:6px 11px;cursor:pointer;
+    height:28px;white-space:nowrap;flex:none;
+  }
+  .today-btn:hover{background:rgba(232,163,61,0.1);}
+  @media (max-width: 460px){
+    .scrubber{padding:9px 10px;gap:7px;}
+    .allday-toggle{font-size:11px;}
+    .scrubber-nav input[type=date]{width:100px;font-size:11px;}
+    .today-btn{font-size:11px;padding:6px 9px;}
+  }
+
+  #map{height:min(56vh,460px);width:100%;background:#0e1512;}
+  .leaflet-container{font-family:'IBM Plex Sans',sans-serif;background:#0e1512;}
+  .refresh-note{padding:10px 18px;font-size:12px;color:var(--text-dim);background:var(--surface-2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+  .refresh-note button{font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:600;background:transparent;color:var(--amber);border:1px solid var(--amber);border-radius:7px;padding:6px 12px;cursor:pointer;}
+  .refresh-note button:hover{background:rgba(232,163,61,0.1);}
+  .history{padding:6px 10px 14px;}
+  .entry{display:flex;gap:12px;padding:12px 8px;border-bottom:1px solid var(--line);}
+  .entry:last-child{border-bottom:none;}
+  .entry .marker{width:30px;height:30px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;margin-top:2px;color:var(--sand);}
+  .entry .marker.amber{background:var(--amber);color:#231a08;}
+  .entry .marker.red{background:var(--rust);}
+  .entry .body{flex:1;min-width:0;}
+  .entry .when{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--amber);}
+  .entry .loc{font-size:14px;font-weight:600;color:var(--sand);margin-top:2px;}
+  .entry .desc{font-size:13.5px;color:var(--text);margin-top:3px;line-height:1.45;word-wrap:break-word;}
+  .entry .meta{font-size:12px;color:var(--text-dim);margin-top:4px;}
+  .entry .geo-fail{font-size:11px;color:#c1592b;margin-top:4px;font-style:italic;}
+  .empty-state, .loading-state{padding:40px 20px;text-align:center;color:var(--text-dim);font-size:14px;}
+  .empty-state .big, .loading-state .big{font-size:30px;margin-bottom:8px;}
+  footer{padding:20px;text-align:center;font-size:12px;color:var(--text-dim);border-top:1px solid var(--line);}
+  .leaflet-popup-content-wrapper{background:var(--surface);color:var(--text);border-radius:10px;}
+  .leaflet-popup-tip{background:var(--surface);}
+  .leaflet-popup-content{font-family:'IBM Plex Sans',sans-serif;font-size:13px;margin:10px 12px;max-width:240px;}
+  .popup-when{font-family:'IBM Plex Mono',monospace;color:var(--amber);font-size:11.5px;}
+  .popup-loc{font-weight:600;color:var(--sand);margin-top:2px;}
+  .leaflet-tooltip.pdr-tip{
+    background:var(--surface);color:var(--text);border:1px solid var(--line);
+    font-family:'IBM Plex Sans',sans-serif;font-size:12px;border-radius:8px;padding:6px 9px;
+  }
+  .leaflet-tooltip.pdr-tip::before{border-top-color:var(--surface);}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--amber);border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">PDR Coyote Watch — Live</div>
+    <h1>Sighting map &amp; history</h1>
+    <p class="sub">Pulls directly from the community report form — refreshes automatically, no admin step needed.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
+      <a href="https://docs.google.com/forms/d/e/1FAIpQLSdKTNz8plmwLb9VKfHrPeuM-pX1ynjo7TOBRPLbT2W08BSrcQ/viewform" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:7px;background:var(--amber);color:#231a08;font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:13.5px;padding:10px 16px;border-radius:9px;text-decoration:none;">
+        📝 Report a sighting
+      </a>
+      <a href="drop-pin.html" style="display:inline-flex;align-items:center;gap:7px;background:transparent;color:var(--amber);border:1px solid var(--amber);font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:13.5px;padding:10px 16px;border-radius:9px;text-decoration:none;">
+        📍 Drop a pin instead
+      </a>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n" id="statTotal">–</div><div class="l">Total logged</div></div>
+      <div class="stat"><div class="n" id="statWeek">–</div><div class="l">Last 7 days</div></div>
+      <div class="stat"><div class="n" id="statConcern">–</div><div class="l">Flagged behavior</div></div>
+      <div class="stat"><div class="n" id="statGeo">–</div><div class="l">Mapped / total</div></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Map <span id="mapPanelLabel" style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:400;color:var(--amber);margin-left:8px;">All time</span></h2>
+        <div class="legend">
+          <span><span class="dot" style="background:#e8a33d;"></span>Passed through</span>
+          <span><span class="dot" style="background:#c1592b;"></span>Held its ground</span>
+        </div>
+      </div>
+
+      <div class="scrubber">
+        <label class="allday-toggle">
+          <input type="checkbox" id="showAllToggle" checked> All-time
+        </label>
+        <div class="scrubber-nav">
+          <button id="prevDay" title="Previous day">&larr;</button>
+          <input type="date" id="datePicker">
+          <button id="nextDay" title="Next day">&rarr;</button>
+        </div>
+        <div class="scrubber-spacer"></div>
+        <button class="today-btn" id="jumpToday">Today</button>
+      </div>
+
+      <div id="map"></div>
+      <div class="refresh-note">
+        <span id="refreshStatus">Loading latest reports…</span>
+        <button id="refreshBtn">↻ Refresh now</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>History</h2><span class="legend" id="historyCount"></span></div>
+      <div class="history" id="historyList">
+        <div class="loading-state"><div class="big">🐾</div>Loading sightings…</div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    Community-reported, not a tracking device. Data reflects the linked report form.<br>
+    Locations are approximate — geocoded from the cross streets/address entered on each report.
+  </footer>
+</div>
+
+<script>
+const CENTER = [33.9617, -118.4473];
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRic5_oOxb3VJGOOueyUXsfxuNvWN_VfNjqnHjZX67Q-06rTyYjzh1nFLJtQdreSvjC1JglqnrGPk9P/pub?output=csv";
+const GEOCODE_AREA = "Playa del Rey, CA 90293";
+const CACHE_KEY = "pdr-coyote-geocode-cache-v3";
+
+let map, markersLayer;
+let allSightings = [];
+let selectedDate = new Date();
+let showAllTime = true; // default: show everything so a new visitor sees all history immediately
+
+function ymd(d){
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function initMap(){
+  map = L.map('map').setView(CENTER, 14);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19
+  }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+}
+
+function getCache(){ try{ return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); }catch(e){ return {}; } }
+function setCache(c){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify(c)); }catch(e){} }
+
+async function geocodeOnce(query){
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+  try{
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.length) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  }catch(e){ /* swallow, try fallback */ }
+  return null;
+}
+
+// Nominatim (the free geocoder) is often imprecise about exact street
+// intersections. Tries several query phrasings before falling back to
+// just the first street name. Every result here is marked approximate —
+// only reporter-supplied exact coordinates (from the Drop Pin tool) are
+// treated as precise.
+async function geocode(address){
+  const cache = getCache();
+  const key = address.trim().toLowerCase();
+  if (cache[key] !== undefined) return cache[key];
+
+  const parts = address.split(/\s+and\s+|&|,/i).map(p => p.trim()).filter(Boolean);
+  const [s1, s2] = parts;
+
+  const attempts = [`${address}, ${GEOCODE_AREA}`];
+  if (s1 && s2){
+    attempts.push(`${s1} and ${s2}, ${GEOCODE_AREA}`);
+    attempts.push(`${s2} & ${s1}, ${GEOCODE_AREA}`);
+    attempts.push(`${s2} and ${s1}, ${GEOCODE_AREA}`);
+  }
+
+  let result = null;
+  for (const query of attempts){
+    result = await geocodeOnce(query);
+    if (result) break;
+  }
+
+  if (!result && s1){
+    result = await geocodeOnce(`${s1}, ${GEOCODE_AREA}`);
+  }
+
+  if (result) result.approximate = true; // geocoded from text — always treat as approximate
+
+  cache[key] = result;
+  setCache(cache);
+  return result;
+}
+
+// Parses "33.9587, -118.4452" style coordinate pastes from Google Maps.
+function parseExactCoords(text){
+  if (!text) return null;
+  const match = text.match(/(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
+  if (!match) return null;
+  const lat = parseFloat(match[1]);
+  const lng = parseFloat(match[2]);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  if (lat < 33 || lat > 35 || lng < -119.5 || lng > -117.5) return null;
+  return { lat, lng };
+}
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+const CONCERN_KEYWORDS = [
+  'held its ground', "didn't run", "did not run", "didn't flee", "did not flee",
+  'approach', 'followed', 'aggressive', 'stood its ground', "didn't move",
+  "did not move", 'toward me', 'toward us', 'growl', 'bark', 'lunge'
+];
+function isConcerning(text){
+  const t = (text || '').toLowerCase();
+  return CONCERN_KEYWORDS.some(k => t.includes(k));
+}
+
+// Attempts to parse the free-text "Date and time seen" field.
+// Falls back to the auto-generated form Timestamp if it can't.
+function parseSeenDate(seenAtText, timestampText){
+  if (seenAtText){
+    const cleaned = seenAtText.replace(/(\d+)(st|nd|rd|th)/gi, '$1');
+    const attempt = new Date(cleaned);
+    if (!isNaN(attempt.getTime())) return attempt;
+  }
+  const ts = new Date(timestampText);
+  if (!isNaN(ts.getTime())) return ts;
+  return null;
+}
+
+function relTime(d){
+  if (!d) return '';
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 3600) return Math.max(1, Math.floor(diff/60)) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  const days = Math.floor(diff/86400);
+  if (days < 7) return days + 'd ago';
+  return d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+}
+
+function pick(row, ...keys){
+  for (const k of keys){
+    for (const actualKey in row){
+      if (actualKey.trim().toLowerCase() === k.toLowerCase()){
+        return (row[actualKey] || '').trim();
+      }
+    }
+  }
+  return '';
+}
+
+async function loadData(){
+  document.getElementById('refreshStatus').innerHTML = '<span class="spinner"></span>Fetching latest reports…';
+  let rows;
+  try{
+    const res = await fetch(CSV_URL + '&_=' + Date.now());
+    const csvText = await res.text();
+    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+    rows = parsed.data;
+  }catch(e){
+    document.getElementById('refreshStatus').textContent = 'Could not load data — check your connection';
+    return;
+  }
+
+  const sightings = rows.map(row => {
+    const timestamp = pick(row, 'Timestamp');
+    const dateOnly = pick(row, 'Date');
+    const timeSeen = pick(row, 'Time seen');
+    const legacySeenAt = pick(row, 'Date and time seen');
+    const seenAt = legacySeenAt || [dateOnly, timeSeen].filter(Boolean).join(' ');
+
+    const street1 = pick(row, 'Nearest street');
+    const street2 = pick(row, 'Cross street');
+    const legacyAddress = pick(row, 'Nearest cross streets or address');
+    const coordsRaw = pick(
+      row,
+      'Exact coordinates (optional)',
+      'Exact coordinates',
+      'https://pdrcoyotewatch-sudo.github.io/pdr-coyote-watch/drop-pin.html'
+    );
+
+    let address = legacyAddress;
+    if (street1 && street2) address = `${street1} & ${street2}`;
+    else if (street1) address = street1;
+
+    let exactCoords = null;
+    if (coordsRaw){
+      const m = coordsRaw.match(/(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
+      if (m) exactCoords = { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+    }
+
+    return {
+      timestamp,
+      address,
+      exactCoords,
+      seenAt,
+      seenDate: parseSeenDate(seenAt, timestamp),
+      doing: pick(row, 'What was it doing'),
+      who: pick(row, 'Your name and/or street (optional)', 'Your name or street'),
+      count: pick(row, 'Number of Coyotes'),
+      reaction: pick(row, 'Reaction when seen')
+    };
+  }).filter(s => s.address || s.exactCoords);
+
+  document.getElementById('refreshStatus').innerHTML = `<span class="spinner"></span>Locating ${sightings.length} report(s)…`;
+
+  let mapped = 0;
+  for (let i = 0; i < sightings.length; i++){
+    const s = sightings[i];
+    s.concern = isConcerning(s.reaction) || isConcerning(s.doing);
+    if (s.exactCoords){
+      s.loc = s.exactCoords; // trust the reporter's own pin, skip geocoding entirely
+    } else if (s.address){
+      s.loc = await geocode(s.address);
+      await sleep(250);
+    }
+    if (s.loc) mapped++;
+  }
+
+  allSightings = sightings;
+  document.getElementById('statGeo').textContent = `${mapped}/${sightings.length}`;
+
+  const weekAgo = Date.now() - 7*86400*1000;
+  document.getElementById('statTotal').textContent = sightings.length;
+  document.getElementById('statWeek').textContent = sightings.filter(s => s.seenDate && s.seenDate.getTime() > weekAgo).length;
+  document.getElementById('statConcern').textContent = sightings.filter(s => s.concern).length;
+
+  document.getElementById('refreshStatus').textContent = `Updated ${new Date().toLocaleTimeString()} · ${sightings.length} report(s), ${mapped} mapped`;
+
+  renderForSelectedDate();
+}
+
+function renderForSelectedDate(){
+  const filtered = showAllTime
+    ? allSightings.slice()
+    : allSightings.filter(s => s.seenDate && ymd(s.seenDate) === ymd(selectedDate));
+
+  filtered.sort((a,b) => (b.seenDate?.getTime()||0) - (a.seenDate?.getTime()||0));
+
+  renderMarkers(filtered);
+  renderHistory(filtered);
+
+  const label = showAllTime
+    ? 'All time'
+    : selectedDate.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+  document.getElementById('mapPanelLabel').textContent = label;
+}
+
+function renderMarkers(items){
+  markersLayer.clearLayers();
+  items.forEach(s => {
+    if (!s.loc) return;
+    const color = s.concern ? '#c1592b' : '#e8a33d';
+    const marker = L.circleMarker([s.loc.lat, s.loc.lng], {
+      radius: 8, color: color, weight: 2, fillColor: color,
+      fillOpacity: s.loc.approximate ? 0.45 : 0.8,
+      dashArray: s.loc.approximate ? '3,3' : null
+    }).addTo(markersLayer);
+
+    const tipText = `${s.seenAt || relTime(s.seenDate)} — ${s.doing ? s.doing.slice(0,60) : (s.reaction || 'No details')}`;
+    marker.bindTooltip(tipText, { className: 'pdr-tip', direction: 'top', offset: [0,-6] });
+
+    const descParts = [];
+    if (s.doing) descParts.push(s.doing.replace(/</g,'&lt;'));
+    if (s.reaction) descParts.push('Reaction: ' + s.reaction.replace(/</g,'&lt;'));
+    marker.bindPopup(
+      `<div class="popup-when">${s.seenAt || relTime(s.seenDate)}</div>` +
+      `<div class="popup-loc">${s.address ? s.address.replace(/</g,'&lt;') : 'Pinned location'}${s.loc.approximate ? ' <span style="opacity:.6;">(approx.)</span>' : ''}</div>` +
+      `<div style="margin-top:4px;">${descParts.join('<br>')}</div>` +
+      (s.count ? `<div style="margin-top:4px;color:#9cafa3;">Count: ${s.count.replace(/</g,'&lt;')}</div>` : '') +
+      (s.who ? `<div style="margin-top:6px;color:#9cafa3;font-size:11.5px;">— ${s.who.replace(/</g,'&lt;')}</div>` : '')
+    );
+  });
+}
+
+function renderHistory(items){
+  const list = document.getElementById('historyList');
+  document.getElementById('historyCount').textContent = items.length ? `${items.length} entries` : '';
+  if (!items.length){
+    list.innerHTML = showAllTime
+      ? `<div class="empty-state"><div class="big">🐾</div>No sightings logged yet.</div>`
+      : `<div class="empty-state"><div class="big">🐾</div>No sightings on this date. Try "Show all-time" or pick another day.</div>`;
+    return;
+  }
+  list.innerHTML = items.map(s => `
+    <div class="entry">
+      <div class="marker ${s.concern ? 'red' : 'amber'}">🐾</div>
+      <div class="body">
+        <div class="when">${s.seenAt || relTime(s.seenDate)}</div>
+        <div class="loc">${s.address ? s.address.replace(/</g,'&lt;') : 'Pinned location'}</div>
+        <div class="desc">${s.doing ? s.doing.replace(/</g,'&lt;') : '<span style="color:var(--text-dim)">No details added</span>'}</div>
+        ${s.reaction ? `<div class="meta">Reaction: ${s.reaction.replace(/</g,'&lt;')}</div>` : ''}
+        ${s.who ? `<div class="meta">— ${s.who.replace(/</g,'&lt;')}</div>` : ''}
+        ${!s.loc ? `<div class="geo-fail">Couldn't place this on the map automatically</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ---- Controls ----
+document.getElementById('datePicker').valueAsDate = new Date();
+document.getElementById('datePicker').addEventListener('change', (e) => {
+  if (e.target.value){
+    selectedDate = new Date(e.target.value + 'T00:00:00');
+    showAllTime = false;
+    document.getElementById('showAllToggle').checked = false;
+    renderForSelectedDate();
+  }
+});
+document.getElementById('prevDay').addEventListener('click', () => {
+  selectedDate.setDate(selectedDate.getDate() - 1);
+  document.getElementById('datePicker').valueAsDate = selectedDate;
+  showAllTime = false;
+  document.getElementById('showAllToggle').checked = false;
+  renderForSelectedDate();
+});
+document.getElementById('nextDay').addEventListener('click', () => {
+  selectedDate.setDate(selectedDate.getDate() + 1);
+  document.getElementById('datePicker').valueAsDate = selectedDate;
+  showAllTime = false;
+  document.getElementById('showAllToggle').checked = false;
+  renderForSelectedDate();
+});
+document.getElementById('jumpToday').addEventListener('click', () => {
+  selectedDate = new Date();
+  document.getElementById('datePicker').valueAsDate = selectedDate;
+  showAllTime = false;
+  document.getElementById('showAllToggle').checked = false;
+  renderForSelectedDate();
+});
+document.getElementById('showAllToggle').addEventListener('change', (e) => {
+  showAllTime = e.target.checked;
+  renderForSelectedDate();
+});
+document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+initMap();
+loadData();
+</script>
+</body>
+</html>
